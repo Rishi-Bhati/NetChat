@@ -3,6 +3,8 @@ import socket
 import select 
 import sys 
 import traceback
+import threading
+import platform
 
 def setup_connection():
     """
@@ -48,6 +50,20 @@ def setup_connection():
         traceback.print_exc()
         return None
 
+def input_thread_func(server_socket, stop_event):
+    try:
+        while not stop_event.is_set():
+            message = sys.stdin.readline()
+            if not message:
+                break
+            server_socket.send(message.encode('utf-8'))
+            sys.stdout.write("<You> ")
+            sys.stdout.write(message)
+            sys.stdout.flush()
+    except Exception as e:
+        print(f"\nError sending message: {str(e)}")
+        stop_event.set()
+
 # Establish connection to the server
 server = setup_connection()
 if not server:
@@ -60,50 +76,53 @@ try:
     name = input("Enter your name: ")
     server.send(name.encode('utf-8'))  # Send name to server
     print(f"Welcome {name}! You can start chatting now.")
-    while True: 
-        # List of input sources to monitor (terminal input and server messages)
-        sockets_list = [sys.stdin, server] 
 
-        """
-        Select monitors multiple input channels:
-        - stdin: For user typing messages
-        - server: For receiving messages from other clients
-        
-        When data is available on any of these channels, select will return
-        that channel in read_sockets.
-        """
-        read_sockets, write_socket, error_socket = select.select(sockets_list, [], []) 
+    stop_event = threading.Event()
+    is_windows = platform.system() == "Windows"
 
-        for sock in read_sockets: 
-            # If message is from the server
-            if sock == server: 
-                try:
-                    # Receive and decode message from server
-                    message = sock.recv(2048)
-                    name = sock.getpeername()  # Get the server's IP address and port
-                    
-                    # Empty message means server disconnected
-                    if not message:
-                        print("\nDisconnected from server")
-                        sys.exit(0)
-                        
-                    # Print the received message
-                    print(message.decode('utf-8'))
-                except Exception as e:
-                    print(f"\nError receiving message: {str(e)}")
-                    sys.exit(1)
-            # If user entered a message
-            else: 
-                # Read message from terminal
-                message = sys.stdin.readline()
-                
-                # Send encoded message to server
-                server.send(message.encode('utf-8'))
-                
-                # Display the message in the terminal
-                sys.stdout.write("<You> ")
-                sys.stdout.write(message)
-                sys.stdout.flush() 
+    if is_windows:
+        # On Windows, use a thread to read user input
+        input_thread = threading.Thread(target=input_thread_func, args=(server, stop_event), daemon=True)
+        input_thread.start()
+
+        while not stop_event.is_set():
+            read_sockets, _, _ = select.select([server], [], [], 0.5)
+            for sock in read_sockets:
+                if sock == server:
+                    try:
+                        message = sock.recv(2048)
+                        if not message:
+                            print("\nDisconnected from server")
+                            stop_event.set()
+                            break
+                        print(message.decode('utf-8'))
+                    except Exception as e:
+                        print(f"\nError receiving message: {str(e)}")
+                        stop_event.set()
+                        break
+        input_thread.join()
+    else:
+        # On non-Windows, use select on stdin and server socket
+        while True:
+            sockets_list = [sys.stdin, server]
+            read_sockets, _, _ = select.select(sockets_list, [], [])
+            for sock in read_sockets:
+                if sock == server:
+                    try:
+                        message = sock.recv(2048)
+                        if not message:
+                            print("\nDisconnected from server")
+                            sys.exit(0)
+                        print(message.decode('utf-8'))
+                    except Exception as e:
+                        print(f"\nError receiving message: {str(e)}")
+                        sys.exit(1)
+                else:
+                    message = sys.stdin.readline()
+                    server.send(message.encode('utf-8'))
+                    sys.stdout.write("<You> ")
+                    sys.stdout.write(message)
+                    sys.stdout.flush()
 
 except KeyboardInterrupt:
     print("\nExiting chat room...")

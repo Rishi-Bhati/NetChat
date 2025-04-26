@@ -80,6 +80,14 @@ python client.py 127.0.0.1 12345
    - Ensure UTF-8 encoding
    - Check network stability
 
+4. **WinError 10038 on Windows when running client**
+   - This error occurs because Windows does not support using `select.select` on `sys.stdin`.
+   - The client has been updated to use a separate input thread on Windows to read user input asynchronously.
+   - To avoid this error, ensure you are using the latest client.py version with this fix.
+   - On non-Windows platforms, the original select-based input handling is retained.
+
+
+
 ## Security Considerations
 ⚠️ **Important:** This is a demonstration application. Not recommended for production use.
 
